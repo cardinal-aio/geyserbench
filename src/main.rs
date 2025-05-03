@@ -304,8 +304,8 @@ async fn process_endpoint(
     transactions.insert(
         "account".to_string(),
         SubscribeRequestFilterTransactions {
-            vote: Some(false),
-            failed: Some(false),
+            vote: None,
+            failed: None,
             signature: None,
             account_include: vec![config.account.clone()],
             account_exclude: vec![],
@@ -348,39 +348,32 @@ async fn process_endpoint(
                         match msg.update_oneof {
                             Some(UpdateOneof::Transaction(tx_msg)) => {
                                 if let Some(tx) = tx_msg.transaction {
-                                    let accounts = tx.transaction.clone().unwrap().message.unwrap().account_keys
-                                        .iter()
-                                        .map(|key| bs58::encode(key).into_string())
-                                        .collect::<Vec<String>>();
+                                    let timestamp = get_current_timestamp();
+                                    let signature = bs58::encode(&tx.transaction.unwrap().signatures[0]).into_string();
 
-                                    if accounts.contains(&config.account) {
-                                        let timestamp = get_current_timestamp();
-                                        let signature = bs58::encode(&tx.transaction.unwrap().signatures[0]).into_string();
+                                    let log_entry = format!(
+                                        "[{:.3}] [{}] Transaction: slot={}, signature={}\n",
+                                        timestamp,
+                                        endpoint.name,
+                                        tx_msg.slot,
+                                        signature
+                                    );
 
-                                        let log_entry = format!(
-                                            "[{:.3}] [{}] Transaction: slot={}, signature={}\n",
+                                    log_file.write_all(log_entry.as_bytes())
+                                        .expect("Failed to write to log file");
+
+                                    let mut data = shared_data.lock().unwrap();
+                                    data.entry(endpoint.name.clone())
+                                        .or_insert_with(Vec::new)
+                                        .push(TransactionData {
                                             timestamp,
-                                            endpoint.name,
-                                            tx_msg.slot,
-                                            signature
-                                        );
+                                            slot: tx_msg.slot,
+                                            signature: signature.clone(),
+                                            start_time,
+                                        });
 
-                                        log_file.write_all(log_entry.as_bytes())
-                                            .expect("Failed to write to log file");
-
-                                        let mut data = shared_data.lock().unwrap();
-                                        data.entry(endpoint.name.clone())
-                                            .or_insert_with(Vec::new)
-                                            .push(TransactionData {
-                                                timestamp,
-                                                slot: tx_msg.slot,
-                                                signature: signature.clone(),
-                                                start_time,
-                                            });
-
-                                        log::info!("{}", log_entry.trim());
-                                        transaction_count += 1;
-                                    }
+                                    log::info!("{}", log_entry.trim());
+                                    transaction_count += 1;
                                 }
                             },
                             Some(UpdateOneof::Ping(_)) => {
