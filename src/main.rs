@@ -1,7 +1,7 @@
 use futures_util::sink::SinkExt;
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, env, fs, path::Path};
+use std::{collections::HashMap, fs, path::Path};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -14,10 +14,9 @@ use yellowstone_grpc_proto::{
     geyser::{CommitmentLevel, SubscribeRequest},
     tonic::transport::ClientTlsConfig,
 };
-use bytes::Bytes;
 use yellowstone_grpc_proto::geyser::subscribe_update::UpdateOneof;
 use yellowstone_grpc_proto::geyser::SubscribeRequestPing;
-use yellowstone_grpc_proto::prelude::{SubscribeRequestFilterAccounts, SubscribeRequestFilterTransactions};
+use yellowstone_grpc_proto::prelude::SubscribeRequestFilterTransactions;
 use bs58;
 use tokio::sync::broadcast;
 
@@ -52,10 +51,9 @@ enum ArgsCommitment {
 
 #[derive(Debug, Clone)]
 struct TransactionData {
-    timestamp: f64,
-    slot: u64,
+    timestamp: u128,
     signature: String,
-    start_time: f64,
+    start_time: u128,
 }
 
 struct EndpointStats {
@@ -75,13 +73,13 @@ impl From<ArgsCommitment> for CommitmentLevel {
     }
 }
 
-fn get_current_timestamp() -> f64 {
+fn get_current_timestamp() -> u128 {
     let start = SystemTime::now();
     let since_epoch = start
         .duration_since(UNIX_EPOCH)
         .expect("Err");
 
-    since_epoch.as_secs_f64()
+    since_epoch.as_nanos()
 }
 
 fn create_default_config() -> Result<ConfigToml, Box<dyn std::error::Error>> {
@@ -182,7 +180,7 @@ fn analyze_delays(data: &HashMap<String, Vec<TransactionData>>) {
             for (endpoint, tx) in sig_data {
                 if endpoint != first_endpoint {
                     if let Some(stats) = endpoint_stats.get_mut(endpoint) {
-                        stats.delays.push((tx.timestamp - first_tx.timestamp) * 1000.0);
+                        stats.delays.push(((tx.timestamp - first_tx.timestamp) / 1_000_000) as f64);
                         stats.total_valid_transactions += 1;
                     }
                 }
@@ -275,7 +273,7 @@ async fn process_endpoint(
     config: Config,
     shared_data: Arc<Mutex<HashMap<String, Vec<TransactionData>>>>,
     mut shutdown_rx: broadcast::Receiver<()>,
-    start_time: f64,
+    start_time: u128,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let max_transactions = config.transactions;
     let mut transaction_count = 0;
@@ -352,7 +350,7 @@ async fn process_endpoint(
                                     let signature = bs58::encode(&tx.transaction.unwrap().signatures[0]).into_string();
 
                                     let log_entry = format!(
-                                        "[{:.3}] [{}] Transaction: slot={}, signature={}\n",
+                                        "[{}] [{}] Transaction: slot={}, signature={}\n",
                                         timestamp,
                                         endpoint.name,
                                         tx_msg.slot,
@@ -367,7 +365,6 @@ async fn process_endpoint(
                                         .or_insert_with(Vec::new)
                                         .push(TransactionData {
                                             timestamp,
-                                            slot: tx_msg.slot,
                                             signature: signature.clone(),
                                             start_time,
                                         });
